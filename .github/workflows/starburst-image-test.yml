@@ -1,0 +1,41 @@
+name: Starburst image generation test
+
+on:
+  push:
+    branches:
+      - starburst-imagegen-20260820
+    paths:
+      - .github/workflows/starburst-image-test.yml
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Generate one independent image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p generated
+          PROMPT='single standalone vertical ecommerce product photograph of a silver starburst pendant necklace on warm cream satin, full chain visible, pendant centered, premium natural window light, realistic metal reflections, no person, no phone, no packaging, no writing, no UI, no collage, no grid, no additional panels'
+          ENCODED=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PROMPT")
+          URL="https://image.pollinations.ai/prompt/${ENCODED}?width=768&height=960&seed=41001&nologo=true&model=flux&safe=true"
+          curl --fail --location --retry 4 --retry-delay 5 --max-time 600 "$URL" --output generated/IMG-01.jpg
+          test -s generated/IMG-01.jpg
+          file generated/IMG-01.jpg
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('generated/IMG-01.jpg')
+          b=p.read_bytes()
+          assert b[:2] == b'\xff\xd8' or b[:8] == b'\x89PNG\r\n\x1a\n', b[:32]
+          print('bytes', len(b))
+          PY
+      - name: Upload image test
+        uses: actions/upload-artifact@v4
+        with:
+          name: starburst-image-test
+          path: generated/IMG-01.jpg
+          if-no-files-found: error
