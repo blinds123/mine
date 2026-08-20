@@ -1,4 +1,4 @@
-name: Starburst 4x5 two-image proof
+name: Starburst Pack 01 generation
 
 on:
   push:
@@ -15,57 +15,86 @@ on:
 permissions:
   contents: read
 
+env:
+  STARBURST_PACK: PACK-01
+
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:
           ref: starburst-imagegen-20260820
-      - name: Generate two independent 4x5 edits
+      - name: Generate pack sequentially as independent outputs
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf hf-test
-          mkdir -p hf-test
+          rm -rf starburst-output
+          mkdir -p starburst-output
+          gunzip -c starburst/prompts.json.gz > starburst/prompts.json
           python3 -m pip install --quiet --upgrade gradio_client pillow requests
           python3 - <<'PY'
           from gradio_client import Client, handle_file
           from PIL import Image
           from pathlib import Path
-          import requests, shutil, json, time
           from io import BytesIO
+          import requests, json, time, hashlib, os
 
-          ref_url = "https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346"
-          ref = Image.open(BytesIO(requests.get(ref_url, timeout=60).content)).convert("RGB")
-          canvas = Image.new("RGB", (1024, 1280), "white")
-          ref.thumbnail((900, 900), Image.Resampling.LANCZOS)
-          canvas.paste(ref, ((1024-ref.width)//2, (1280-ref.height)//2))
-          ref_path = Path("hf-test/reference-4x5.jpg")
-          canvas.save(ref_path, quality=95)
+          pack=os.environ['STARBURST_PACK']
+          prompts=json.loads(Path('starburst/prompts.json').read_text())
+          rows=[x for x in prompts if x['pack']==pack]
+          assert len(rows)==10, (pack,len(rows))
+          outdir=Path('starburst-output')/pack
+          outdir.mkdir(parents=True,exist_ok=True)
 
-          prompts = [
-            ("IMG-01", 45001, "Keep the necklace exactly as shown, including the round silver safety charm, central crystal, separate starburst charm, upper crystal, bail and chain. Replace the plain background with warm cream silk satin. Arrange the full necklace naturally, centered, premium soft window light, realistic silver reflections. No person, packaging, phone, text, collage or other jewelry."),
-            ("IMG-02", 45002, "Keep the necklace exactly as shown, including the round silver safety charm, central crystal, separate starburst charm, upper crystal, bail and chain. Place it at realistic collarbone scale on a photorealistic synthetic adult woman wearing a cream knit V-neck. Crop from lips to waist, soft natural window light. No text, logo, phone, collage or extra jewelry."),
-          ]
-          client = Client("black-forest-labs/FLUX.1-Kontext-Dev")
-          receipt=[]
-          for slot, seed, prompt in prompts:
-              result = client.predict(handle_file(str(ref_path)), prompt, seed, False, 2.5, 24, api_name="/infer")
-              src = result[0] if isinstance(result, (list, tuple)) else result
-              out = Path(f"hf-test/{slot}.webp")
-              Image.open(str(src)).convert("RGB").save(out, "WEBP", quality=92, method=6)
-              im=Image.open(out)
-              receipt.append({"slot":slot,"seed":seed,"prompt":prompt,"size":list(im.size),"source_space":"black-forest-labs/FLUX.1-Kontext-Dev"})
-              time.sleep(8)
-          Path("hf-test/receipt.json").write_text(json.dumps(receipt, indent=2))
+          ref_url='https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346'
+          response=requests.get(ref_url,timeout=90); response.raise_for_status()
+          ref=Image.open(BytesIO(response.content)).convert('RGB')
+          canvas=Image.new('RGB',(1024,1280),'white')
+          ref.thumbnail((900,900),Image.Resampling.LANCZOS)
+          canvas.paste(ref,((1024-ref.width)//2,(1280-ref.height)//2))
+          ref_path=outdir/'REFERENCE-4X5.jpg'; canvas.save(ref_path,quality=96)
+
+          client=Client('black-forest-labs/FLUX.1-Kontext-Dev')
+          receipts=[]; hashes=set()
+          for position,row in enumerate(rows,1):
+              slot=row['slot']; prompt=row['prompt']; seed=int(row['seed'])
+              print(f'GENERATING {pack} {position}/10 {slot}',flush=True)
+              result=None; last=None
+              for attempt in range(1,4):
+                  try:
+                      result=client.predict(handle_file(str(ref_path)),prompt,seed,False,2.5,24,api_name='/infer')
+                      break
+                  except Exception as exc:
+                      last=repr(exc); print(f'{slot} attempt {attempt} failed: {last}',flush=True)
+                      time.sleep(20*attempt)
+                      client=Client('black-forest-labs/FLUX.1-Kontext-Dev')
+              if result is None: raise RuntimeError(f'{slot} failed after retries: {last}')
+              src=result[0] if isinstance(result,(list,tuple)) else result
+              im=Image.open(str(src)).convert('RGB')
+              w,h=im.size; target_ratio=4/5
+              if w/h>target_ratio:
+                  nw=int(h*target_ratio); left=(w-nw)//2; im=im.crop((left,0,left+nw,h))
+              else:
+                  nh=int(w/target_ratio); top=(h-nh)//2; im=im.crop((0,top,w,top+nh))
+              # keep native scale; force dimensions divisible by 4 through a tiny crop only
+              w,h=im.size; nw=w-w%4; nh=h-h%4; im=im.crop(((w-nw)//2,(h-nh)//2,(w-nw)//2+nw,(h-nh)//2+nh))
+              out=outdir/f'{slot}.webp'; im.save(out,'WEBP',quality=95,method=6)
+              digest=hashlib.sha256(out.read_bytes()).hexdigest()
+              if digest in hashes: raise RuntimeError(f'exact duplicate generated: {slot}')
+              hashes.add(digest)
+              receipts.append({'slot':slot,'pack':pack,'position':position,'seed':seed,'prompt':prompt,'source_space':'black-forest-labs/FLUX.1-Kontext-Dev','api_name':'/infer','original_result_size':[w,h],'final_size':list(im.size),'sha256':digest,'generation_mode':'one independent predict call per slot'})
+              time.sleep(10)
+          (outdir/'GENERATION-RECEIPT.json').write_text(json.dumps(receipts,indent=2))
+          ref_path.unlink(missing_ok=True)
+          assert len(list(outdir.glob('IMG-*.webp')))==10
           PY
-          file hf-test/IMG-01.webp hf-test/IMG-02.webp
-      - name: Upload two-image proof
+          find starburst-output -type f -maxdepth 3 -print -exec file {} \;
+      - name: Upload Pack 01
         uses: actions/upload-artifact@v4
         with:
-          name: starburst-4x5-proof
-          path: hf-test/
+          name: starburst-pack-01
+          path: starburst-output/PACK-01/
           if-no-files-found: error
           retention-days: 1
