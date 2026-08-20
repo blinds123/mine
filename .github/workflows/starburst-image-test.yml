@@ -1,4 +1,4 @@
-name: Starburst image generation test
+name: Starburst image model comparison
 
 on:
   push:
@@ -18,37 +18,42 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           ref: starburst-imagegen-20260820
-      - name: Generate one independent image
+      - name: Compare image models on one exact scene
         shell: bash
         run: |
-          set -euo pipefail
-          rm -rf generated-test
-          mkdir -p generated-test
-          PROMPT='Create one standalone vertical 4:5 premium ecommerce product photograph. Preserve the exact supplied silver Star Burst Charm Necklace design: polished round central charm with radiating silver starburst detail, small top crystal, delicate silver chain, same proportions and attachment points. Lay the full necklace naturally on warm cream satin, pendant centered, premium natural window light, realistic metal reflections. No person, no phone, no packaging, no writing, no UI, no collage, no grid, no additional panels, no other jewelry.'
+          set -u
+          rm -rf model-test
+          mkdir -p model-test
+          PROMPT='One standalone vertical 4:5 photorealistic luxury ecommerce product photograph of the exact reference silver Star Burst Charm Necklace only. Lay the complete necklace naturally on warm cream silk satin. The polished round pendant with radiating starburst face, small upper crystal and delicate silver chain must match the reference image. Pendant centered, chain visible, soft natural window light, macro jewelry photography, realistic metal reflections. ABSOLUTELY NO PERSON, NO FACE, NO BODY, NO MANNEQUIN, NO PHONE, NO PACKAGING, NO WRITING, NO UI, NO COLLAGE, NO GRID, NO ADDITIONAL PANEL, NO OTHER JEWELRY, NO ILLUSTRATION, NO ANIME.'
           REF='https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346'
           ENCODED=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PROMPT")
           REF_ENCODED=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$REF")
-          URL="https://image.pollinations.ai/prompt/${ENCODED}?width=768&height=960&seed=41001&nologo=true&model=klein&safe=true&image=${REF_ENCODED}"
-          curl --fail --location --retry 4 --retry-delay 8 --max-time 900 "$URL" --output generated-test/IMG-01.jpg
-          test -s generated-test/IMG-01.jpg
-          file generated-test/IMG-01.jpg
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('generated-test/IMG-01.jpg')
-          b=p.read_bytes()
-          assert b[:2] == b'\xff\xd8' or b[:8] == b'\x89PNG\r\n\x1a\n', b[:64]
-          assert len(b) > 20000, len(b)
-          print('bytes', len(b))
-          PY
-      - name: Upload isolated test image
+          MODELS=(gptimage gptimage-large seedream nanobanana kontext flux zimage)
+          for MODEL in "${MODELS[@]}"; do
+            echo "=== $MODEL ==="
+            URL="https://image.pollinations.ai/prompt/${ENCODED}?width=768&height=960&seed=42001&nologo=true&model=${MODEL}&safe=true&image=${REF_ENCODED}"
+            if curl --fail --location --retry 3 --retry-delay 8 --max-time 900 "$URL" --output "model-test/${MODEL}.jpg"; then
+              if test -s "model-test/${MODEL}.jpg"; then
+                file "model-test/${MODEL}.jpg" || true
+              else
+                rm -f "model-test/${MODEL}.jpg"
+              fi
+            else
+              echo "$MODEL failed" | tee "model-test/${MODEL}.failed.txt"
+              rm -f "model-test/${MODEL}.jpg"
+            fi
+            sleep 5
+          done
+          ls -lh model-test
+      - name: Upload model comparison
         uses: actions/upload-artifact@v4
         with:
-          name: starburst-image-test
-          path: generated-test/IMG-01.jpg
+          name: starburst-model-comparison
+          path: model-test/
           if-no-files-found: error
           retention-days: 1
