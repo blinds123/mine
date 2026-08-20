@@ -6,9 +6,14 @@ on:
       - starburst-imagegen-20260820
     paths:
       - .github/workflows/starburst-image-test.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/starburst-image-test.yml
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   generate:
@@ -22,29 +27,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p generated
+          rm -rf generated-test
+          mkdir -p generated-test
           PROMPT='Create one standalone vertical 4:5 premium ecommerce product photograph. Preserve the exact supplied silver Star Burst Charm Necklace design: polished round central charm with radiating silver starburst detail, small top crystal, delicate silver chain, same proportions and attachment points. Lay the full necklace naturally on warm cream satin, pendant centered, premium natural window light, realistic metal reflections. No person, no phone, no packaging, no writing, no UI, no collage, no grid, no additional panels, no other jewelry.'
           REF='https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346'
           ENCODED=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PROMPT")
           REF_ENCODED=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$REF")
           URL="https://image.pollinations.ai/prompt/${ENCODED}?width=768&height=960&seed=41001&nologo=true&model=klein&safe=true&image=${REF_ENCODED}"
-          curl --fail --location --retry 4 --retry-delay 8 --max-time 900 "$URL" --output generated/IMG-01.jpg
-          test -s generated/IMG-01.jpg
-          file generated/IMG-01.jpg
+          curl --fail --location --retry 4 --retry-delay 8 --max-time 900 "$URL" --output generated-test/IMG-01.jpg
+          test -s generated-test/IMG-01.jpg
+          file generated-test/IMG-01.jpg
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('generated/IMG-01.jpg')
+          p=Path('generated-test/IMG-01.jpg')
           b=p.read_bytes()
           assert b[:2] == b'\xff\xd8' or b[:8] == b'\x89PNG\r\n\x1a\n', b[:64]
           assert len(b) > 20000, len(b)
           print('bytes', len(b))
           PY
-      - name: Commit generated image to isolated branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'starburst-image-bot'
-          git config user.email 'starburst-image-bot@users.noreply.github.com'
-          git add generated/IMG-01.jpg
-          git commit -m 'Generate independent Star Burst IMG-01'
-          git push origin HEAD:starburst-imagegen-20260820
+      - name: Upload isolated test image
+        uses: actions/upload-artifact@v4
+        with:
+          name: starburst-image-test
+          path: generated-test/IMG-01.jpg
+          if-no-files-found: error
+          retention-days: 1
