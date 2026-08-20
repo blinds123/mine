@@ -1,4 +1,4 @@
-name: Starburst Pack 02 matrix generation
+name: Starburst dynamic pack generation
 
 on:
   push:
@@ -6,27 +6,53 @@ on:
       - starburst-imagegen-20260820
     paths:
       - .github/workflows/starburst-image-test.yml
+      - starburst/current-pack.txt
   pull_request:
     branches:
       - main
     paths:
       - .github/workflows/starburst-image-test.yml
+      - starburst/current-pack.txt
 
 permissions:
   contents: read
 
-env:
-  STARBURST_PACK: PACK-02
-
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      pack: ${{ steps.meta.outputs.pack }}
+      slug: ${{ steps.meta.outputs.slug }}
+      positions: ${{ steps.meta.outputs.positions }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: starburst-imagegen-20260820
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACK=$(tr -d '[:space:]' < starburst/current-pack.txt)
+          case "$PACK" in
+            PACK-01|PACK-02|PACK-03|PACK-04|PACK-05|PACK-06) POS='[1,2,3,4,5,6,7,8,9,10]' ;;
+            PACK-07) POS='[1,2,3,4]' ;;
+            *) echo "Invalid pack: $PACK"; exit 1 ;;
+          esac
+          echo "pack=$PACK" >> "$GITHUB_OUTPUT"
+          echo "slug=$(echo "$PACK" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          echo "positions=$POS" >> "$GITHUB_OUTPUT"
+
   generate:
+    needs: setup
     strategy:
       fail-fast: false
       max-parallel: 10
       matrix:
-        position: [1,2,3,4,5,6,7,8,9,10]
+        position: ${{ fromJSON(needs.setup.outputs.positions) }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    env:
+      STARBURST_PACK: ${{ needs.setup.outputs.pack }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,11 +75,15 @@ jobs:
 
           pack=os.environ['STARBURST_PACK']; position=int(os.environ['POSITION'])
           rows=[x for x in json.loads(Path('starburst/prompts.json').read_text()) if x['pack']==pack]
-          assert len(rows)==10
           row=rows[position-1]; slot=row['slot']; prompt=row['prompt']; seed=int(row['seed'])
-          ref_url='https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346'
+          person_markers=('Synthetic adult','synthetic adult','Synthetic mother','synthetic mother','Synthetic adult couple','synthetic adult couple','Two synthetic adult sisters')
+          use_lifestyle=any(m in prompt for m in person_markers)
+          if use_lifestyle:
+              ref_url='https://invisawear.com/cdn/shop/files/Silver_Star_Burst_Charm_Necklace_Lifestyle_2.jpg?v=1767130473&width=1346'
+          else:
+              ref_url='https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346'
           r=requests.get(ref_url,timeout=90); r.raise_for_status(); ref=Image.open(BytesIO(r.content)).convert('RGB')
-          canvas=Image.new('RGB',(1024,1280),'white'); ref.thumbnail((900,900),Image.Resampling.LANCZOS); canvas.paste(ref,((1024-ref.width)//2,(1280-ref.height)//2))
+          canvas=Image.new('RGB',(1024,1280),'white'); ref.thumbnail((1024,1100),Image.Resampling.LANCZOS); canvas.paste(ref,((1024-ref.width)//2,(1280-ref.height)//2))
           ref_path=Path('slot-output/reference.jpg'); canvas.save(ref_path,quality=96)
           client=Client('black-forest-labs/FLUX.1-Kontext-Dev')
           result=None; last=None
@@ -71,35 +101,38 @@ jobs:
               nh=int(im.width/.8); y=(im.height-nh)//2; im=im.crop((0,y,im.width,y+nh))
           w,h=im.size; nw=w-w%4; nh=h-h%4; im=im.crop(((w-nw)//2,(h-nh)//2,(w-nw)//2+nw,(h-nh)//2+nh))
           out=Path(f'slot-output/{slot}.webp'); im.save(out,'WEBP',quality=95,method=6)
-          receipt={'slot':slot,'pack':pack,'position':position,'seed':seed,'prompt':prompt,'source_space':'black-forest-labs/FLUX.1-Kontext-Dev','api_name':'/infer','original_result_size':[ow,oh],'final_size':list(im.size),'sha256':hashlib.sha256(out.read_bytes()).hexdigest(),'generation_mode':'one independent predict call in an isolated matrix job'}
+          receipt={'slot':slot,'pack':pack,'position':position,'seed':seed,'prompt':prompt,'reference_mode':'lifestyle' if use_lifestyle else 'product','source_space':'black-forest-labs/FLUX.1-Kontext-Dev','api_name':'/infer','original_result_size':[ow,oh],'final_size':list(im.size),'sha256':hashlib.sha256(out.read_bytes()).hexdigest(),'generation_mode':'one independent predict call in an isolated matrix job'}
           Path(f'slot-output/{slot}.json').write_text(json.dumps(receipt,indent=2)); ref_path.unlink(missing_ok=True)
           PY
-      - name: Upload isolated slot
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: starburst-pack-02-slot-${{ matrix.position }}
+          name: starburst-${{ needs.setup.outputs.slug }}-slot-${{ matrix.position }}
           path: slot-output/
           if-no-files-found: error
           retention-days: 1
 
   merge:
-    needs: generate
+    needs: [setup, generate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: starburst-pack-02-slot-*
+          pattern: starburst-${{ needs.setup.outputs.slug }}-slot-*
           path: merged
           merge-multiple: true
-      - name: Verify Pack 02
+      - name: Verify complete pack
+        shell: bash
+        env:
+          PACK: ${{ needs.setup.outputs.pack }}
         run: |
           set -euo pipefail
-          test "$(find merged -maxdepth 1 -name 'IMG-*.webp' | wc -l)" -eq 10
-          test "$(find merged -maxdepth 1 -name 'IMG-*.json' | wc -l)" -eq 10
-          sha256sum merged/IMG-*.webp > merged/PACK-02-SHA256.txt
+          EXPECTED=10; [ "$PACK" = 'PACK-07' ] && EXPECTED=4
+          test "$(find merged -maxdepth 1 -name 'IMG-*.webp' | wc -l)" -eq "$EXPECTED"
+          test "$(find merged -maxdepth 1 -name 'IMG-*.json' | wc -l)" -eq "$EXPECTED"
+          sha256sum merged/IMG-*.webp > "merged/${PACK}-SHA256.txt"
       - uses: actions/upload-artifact@v4
         with:
-          name: starburst-pack-02
+          name: starburst-${{ needs.setup.outputs.slug }}
           path: merged/
           if-no-files-found: error
           retention-days: 1
