@@ -1,4 +1,4 @@
-name: Starburst image model comparison
+name: Starburst Hugging Face image edit test
 
 on:
   push:
@@ -18,42 +18,54 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           ref: starburst-imagegen-20260820
-      - name: Compare image models on one exact scene
+      - name: Call public FLUX Kontext Space
         shell: bash
         run: |
-          set -u
-          rm -rf model-test
-          mkdir -p model-test
-          PROMPT='One standalone vertical 4:5 photorealistic luxury ecommerce product photograph of the exact reference silver Star Burst Charm Necklace only. Lay the complete necklace naturally on warm cream silk satin. The polished round pendant with radiating starburst face, small upper crystal and delicate silver chain must match the reference image. Pendant centered, chain visible, soft natural window light, macro jewelry photography, realistic metal reflections. ABSOLUTELY NO PERSON, NO FACE, NO BODY, NO MANNEQUIN, NO PHONE, NO PACKAGING, NO WRITING, NO UI, NO COLLAGE, NO GRID, NO ADDITIONAL PANEL, NO OTHER JEWELRY, NO ILLUSTRATION, NO ANIME.'
-          REF='https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346'
-          ENCODED=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PROMPT")
-          REF_ENCODED=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$REF")
-          MODELS=(gptimage gptimage-large seedream nanobanana kontext flux zimage)
-          for MODEL in "${MODELS[@]}"; do
-            echo "=== $MODEL ==="
-            URL="https://image.pollinations.ai/prompt/${ENCODED}?width=768&height=960&seed=42001&nologo=true&model=${MODEL}&safe=true&image=${REF_ENCODED}"
-            if curl --fail --location --retry 3 --retry-delay 8 --max-time 900 "$URL" --output "model-test/${MODEL}.jpg"; then
-              if test -s "model-test/${MODEL}.jpg"; then
-                file "model-test/${MODEL}.jpg" || true
-              else
-                rm -f "model-test/${MODEL}.jpg"
-              fi
-            else
-              echo "$MODEL failed" | tee "model-test/${MODEL}.failed.txt"
-              rm -f "model-test/${MODEL}.jpg"
-            fi
-            sleep 5
-          done
-          ls -lh model-test
-      - name: Upload model comparison
+          set -euo pipefail
+          rm -rf hf-test
+          mkdir -p hf-test
+          python3 -m pip install --quiet --upgrade gradio_client pillow
+          python3 - <<'PY'
+          from gradio_client import Client, handle_file
+          from pathlib import Path
+          import json, shutil
+
+          space = "mcp-tools/FLUX.1-Kontext-Dev"
+          client = Client(space)
+          api = client.view_api(return_format="dict")
+          Path("hf-test/api.json").write_text(json.dumps(api, indent=2, default=str))
+          print(json.dumps(api, indent=2, default=str))
+
+          ref = "https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346"
+          prompt = (
+              "Preserve the exact silver Star Burst Charm Necklace and its geometry. "
+              "Change only the setting into a premium vertical ecommerce product photo: place the complete necklace on warm cream silk satin, "
+              "full chain visible, pendant centered, soft natural window light, realistic polished silver reflections. "
+              "No person, no face, no body, no phone, no packaging, no text, no collage, no extra jewelry."
+          )
+          result = client.predict(
+              handle_file(ref),
+              prompt,
+              44001,
+              False,
+              2.5,
+              22,
+              api_name="/infer",
+          )
+          print("RESULT", result)
+          image_path = result[0] if isinstance(result, (list, tuple)) else result
+          shutil.copy2(str(image_path), "hf-test/IMG-01.png")
+          PY
+          file hf-test/IMG-01.png
+      - name: Upload HF image test
         uses: actions/upload-artifact@v4
         with:
-          name: starburst-model-comparison
-          path: model-test/
+          name: starburst-hf-image-test
+          path: hf-test/
           if-no-files-found: error
           retention-days: 1
