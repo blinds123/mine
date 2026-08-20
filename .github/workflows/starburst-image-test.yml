@@ -18,12 +18,12 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           ref: starburst-imagegen-20260820
-      - name: Call public FLUX Kontext Space
+      - name: Call official public FLUX Kontext Space
         shell: bash
         run: |
           set -euo pipefail
@@ -35,7 +35,7 @@ jobs:
           from pathlib import Path
           import json, shutil
 
-          space = "mcp-tools/FLUX.1-Kontext-Dev"
+          space = "black-forest-labs/FLUX.1-Kontext-Dev"
           client = Client(space)
           api = client.view_api(return_format="dict")
           Path("hf-test/api.json").write_text(json.dumps(api, indent=2, default=str))
@@ -43,19 +43,13 @@ jobs:
 
           ref = "https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346"
           prompt = (
-              "Preserve the exact silver Star Burst Charm Necklace and its geometry. "
-              "Change only the setting into a premium vertical ecommerce product photo: place the complete necklace on warm cream silk satin, "
-              "full chain visible, pendant centered, soft natural window light, realistic polished silver reflections. "
-              "No person, no face, no body, no phone, no packaging, no text, no collage, no extra jewelry."
+              "Preserve the exact silver Star Burst Charm Necklace, chain, pendant geometry, top crystal and polished finish. "
+              "Change only the setting into a premium product photograph: place the complete necklace on warm cream silk satin, "
+              "full chain visible, pendant centered, soft natural window light, realistic silver reflections. "
+              "Remove every person and all packaging. No phone, no text, no collage, no extra jewelry."
           )
           result = client.predict(
-              handle_file(ref),
-              prompt,
-              44001,
-              False,
-              2.5,
-              22,
-              api_name="/infer",
+              handle_file(ref), prompt, 44002, False, 2.5, 24, api_name="/infer"
           )
           print("RESULT", result)
           image_path = result[0] if isinstance(result, (list, tuple)) else result
