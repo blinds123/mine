@@ -1,4 +1,4 @@
-name: Starburst Hugging Face image edit test
+name: Starburst 4x5 two-image proof
 
 on:
   push:
@@ -18,48 +18,54 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           ref: starburst-imagegen-20260820
-      - name: Call official public FLUX Kontext Space
+      - name: Generate two independent 4x5 edits
         shell: bash
         run: |
           set -euo pipefail
           rm -rf hf-test
           mkdir -p hf-test
-          python3 -m pip install --quiet --upgrade gradio_client pillow
+          python3 -m pip install --quiet --upgrade gradio_client pillow requests
           python3 - <<'PY'
           from gradio_client import Client, handle_file
+          from PIL import Image
           from pathlib import Path
-          import json, shutil
+          import requests, shutil, json, time
+          from io import BytesIO
 
-          space = "black-forest-labs/FLUX.1-Kontext-Dev"
-          client = Client(space)
-          api = client.view_api(return_format="dict")
-          Path("hf-test/api.json").write_text(json.dumps(api, indent=2, default=str))
-          print(json.dumps(api, indent=2, default=str))
+          ref_url = "https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346"
+          ref = Image.open(BytesIO(requests.get(ref_url, timeout=60).content)).convert("RGB")
+          canvas = Image.new("RGB", (1024, 1280), "white")
+          ref.thumbnail((900, 900), Image.Resampling.LANCZOS)
+          canvas.paste(ref, ((1024-ref.width)//2, (1280-ref.height)//2))
+          ref_path = Path("hf-test/reference-4x5.jpg")
+          canvas.save(ref_path, quality=95)
 
-          ref = "https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346"
-          prompt = (
-              "Preserve the exact silver Star Burst Charm Necklace, chain, pendant geometry, top crystal and polished finish. "
-              "Change only the setting into a premium product photograph: place the complete necklace on warm cream silk satin, "
-              "full chain visible, pendant centered, soft natural window light, realistic silver reflections. "
-              "Remove every person and all packaging. No phone, no text, no collage, no extra jewelry."
-          )
-          result = client.predict(
-              handle_file(ref), prompt, 44002, False, 2.5, 24, api_name="/infer"
-          )
-          print("RESULT", result)
-          image_path = result[0] if isinstance(result, (list, tuple)) else result
-          shutil.copy2(str(image_path), "hf-test/IMG-01.png")
+          prompts = [
+            ("IMG-01", 45001, "Keep the necklace exactly as shown, including the round silver safety charm, central crystal, separate starburst charm, upper crystal, bail and chain. Replace the plain background with warm cream silk satin. Arrange the full necklace naturally, centered, premium soft window light, realistic silver reflections. No person, packaging, phone, text, collage or other jewelry."),
+            ("IMG-02", 45002, "Keep the necklace exactly as shown, including the round silver safety charm, central crystal, separate starburst charm, upper crystal, bail and chain. Place it at realistic collarbone scale on a photorealistic synthetic adult woman wearing a cream knit V-neck. Crop from lips to waist, soft natural window light. No text, logo, phone, collage or extra jewelry."),
+          ]
+          client = Client("black-forest-labs/FLUX.1-Kontext-Dev")
+          receipt=[]
+          for slot, seed, prompt in prompts:
+              result = client.predict(handle_file(str(ref_path)), prompt, seed, False, 2.5, 24, api_name="/infer")
+              src = result[0] if isinstance(result, (list, tuple)) else result
+              out = Path(f"hf-test/{slot}.webp")
+              Image.open(str(src)).convert("RGB").save(out, "WEBP", quality=92, method=6)
+              im=Image.open(out)
+              receipt.append({"slot":slot,"seed":seed,"prompt":prompt,"size":list(im.size),"source_space":"black-forest-labs/FLUX.1-Kontext-Dev"})
+              time.sleep(8)
+          Path("hf-test/receipt.json").write_text(json.dumps(receipt, indent=2))
           PY
-          file hf-test/IMG-01.png
-      - name: Upload HF image test
+          file hf-test/IMG-01.webp hf-test/IMG-02.webp
+      - name: Upload two-image proof
         uses: actions/upload-artifact@v4
         with:
-          name: starburst-hf-image-test
+          name: starburst-4x5-proof
           path: hf-test/
           if-no-files-found: error
           retention-days: 1
