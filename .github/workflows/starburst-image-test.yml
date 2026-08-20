@@ -79,10 +79,12 @@ jobs:
           person_markers=('Synthetic adult','synthetic adult','Synthetic mother','synthetic mother','Synthetic adult couple','synthetic adult couple','Two synthetic adult sisters')
           person_scene=any(m in prompt for m in person_markers)
           if person_scene:
-              prompt += ' Create a clearly different synthetic person from every other slot, following the specified age, appearance, hair and setting. Show exactly one necklace and one single chain. Do not add matching earrings or duplicate jewelry.'
+              prompt += ' Create a clearly different synthetic person from every other slot, following the specified age, appearance, hair and setting. Show exactly one necklace and one single chain. The round safety charm must remain small and coin-sized at natural collarbone scale, never oversized. Do not add matching earrings or duplicate jewelry.'
           ref_url='https://invisawear.com/cdn/shop/files/Necklace_Silver_StarBurst_A2.jpg?v=1767130473&width=1346'
           r=requests.get(ref_url,timeout=90); r.raise_for_status(); ref=Image.open(BytesIO(r.content)).convert('RGB')
-          canvas=Image.new('RGB',(1024,1280),'white'); ref.thumbnail((1024,1100),Image.Resampling.LANCZOS); canvas.paste(ref,((1024-ref.width)//2,(1280-ref.height)//2))
+          canvas=Image.new('RGB',(1024,1280),'white')
+          ref.thumbnail((340,340) if person_scene else (900,900),Image.Resampling.LANCZOS)
+          canvas.paste(ref,((1024-ref.width)//2,(1280-ref.height)//2))
           ref_path=Path('slot-output/reference.jpg'); canvas.save(ref_path,quality=96)
           client=Client('black-forest-labs/FLUX.1-Kontext-Dev')
           result=None; last=None
@@ -100,7 +102,7 @@ jobs:
               nh=int(im.width/.8); y=(im.height-nh)//2; im=im.crop((0,y,im.width,y+nh))
           w,h=im.size; nw=w-w%4; nh=h-h%4; im=im.crop(((w-nw)//2,(h-nh)//2,(w-nw)//2+nw,(h-nh)//2+nh))
           out=Path(f'slot-output/{slot}.webp'); im.save(out,'WEBP',quality=95,method=6)
-          receipt={'slot':slot,'pack':pack,'position':position,'seed':seed,'prompt':prompt,'reference_mode':'product','source_space':'black-forest-labs/FLUX.1-Kontext-Dev','api_name':'/infer','original_result_size':[ow,oh],'final_size':list(im.size),'sha256':hashlib.sha256(out.read_bytes()).hexdigest(),'generation_mode':'one independent predict call in an isolated matrix job'}
+          receipt={'slot':slot,'pack':pack,'position':position,'seed':seed,'prompt':prompt,'reference_mode':'small-product-on-4x5-canvas' if person_scene else 'full-product-on-4x5-canvas','source_space':'black-forest-labs/FLUX.1-Kontext-Dev','api_name':'/infer','original_result_size':[ow,oh],'final_size':list(im.size),'sha256':hashlib.sha256(out.read_bytes()).hexdigest(),'generation_mode':'one independent predict call in an isolated matrix job'}
           Path(f'slot-output/{slot}.json').write_text(json.dumps(receipt,indent=2)); ref_path.unlink(missing_ok=True)
           PY
       - uses: actions/upload-artifact@v4
