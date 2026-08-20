@@ -1,4 +1,4 @@
-name: Starburst Pack 01 matrix generation
+name: Starburst Pack 02 matrix generation
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  STARBURST_PACK: PACK-01
+  STARBURST_PACK: PACK-02
 
 jobs:
   generate:
@@ -72,14 +72,12 @@ jobs:
           w,h=im.size; nw=w-w%4; nh=h-h%4; im=im.crop(((w-nw)//2,(h-nh)//2,(w-nw)//2+nw,(h-nh)//2+nh))
           out=Path(f'slot-output/{slot}.webp'); im.save(out,'WEBP',quality=95,method=6)
           receipt={'slot':slot,'pack':pack,'position':position,'seed':seed,'prompt':prompt,'source_space':'black-forest-labs/FLUX.1-Kontext-Dev','api_name':'/infer','original_result_size':[ow,oh],'final_size':list(im.size),'sha256':hashlib.sha256(out.read_bytes()).hexdigest(),'generation_mode':'one independent predict call in an isolated matrix job'}
-          Path(f'slot-output/{slot}.json').write_text(json.dumps(receipt,indent=2))
-          ref_path.unlink(missing_ok=True)
-          print(json.dumps(receipt,indent=2))
+          Path(f'slot-output/{slot}.json').write_text(json.dumps(receipt,indent=2)); ref_path.unlink(missing_ok=True)
           PY
       - name: Upload isolated slot
         uses: actions/upload-artifact@v4
         with:
-          name: starburst-pack-01-slot-${{ matrix.position }}
+          name: starburst-pack-02-slot-${{ matrix.position }}
           path: slot-output/
           if-no-files-found: error
           retention-days: 1
@@ -88,24 +86,20 @@ jobs:
     needs: generate
     runs-on: ubuntu-latest
     steps:
-      - name: Download all isolated slots
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          pattern: starburst-pack-01-slot-*
+          pattern: starburst-pack-02-slot-*
           path: merged
           merge-multiple: true
-      - name: Verify Pack 01
-        shell: bash
+      - name: Verify Pack 02
         run: |
           set -euo pipefail
           test "$(find merged -maxdepth 1 -name 'IMG-*.webp' | wc -l)" -eq 10
           test "$(find merged -maxdepth 1 -name 'IMG-*.json' | wc -l)" -eq 10
-          sha256sum merged/IMG-*.webp > merged/PACK-01-SHA256.txt
-          find merged -maxdepth 1 -type f -print -exec file {} \;
-      - name: Upload complete Pack 01
-        uses: actions/upload-artifact@v4
+          sha256sum merged/IMG-*.webp > merged/PACK-02-SHA256.txt
+      - uses: actions/upload-artifact@v4
         with:
-          name: starburst-pack-01
+          name: starburst-pack-02
           path: merged/
           if-no-files-found: error
           retention-days: 1
